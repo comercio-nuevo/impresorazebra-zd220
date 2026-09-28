@@ -26,5 +26,6 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cazatoy.labels.plist
 ## Menú
 
 - **Matriz:** apagada, un `.txt` con `^XA` sale como ZPL II. Encendida, la etiqueta se dibuja como una cuadrícula de números y el código de barras no se escanea.
-- **Posición del logo:** coloca hasta dos imágenes, arrástralas y guarda el preset por tienda. **Pasar a ASCII** convierte la imagen seleccionada en caracteres. La impresora los saca en negro. Pulsa Guardar para usarlo.
+- **Posición del logo:** coloca hasta dos imágenes, arrástralas y guarda el preset por tienda. La **×** quita una imagen para cargar otra. **Pasar a ASCII** convierte la imagen seleccionada en caracteres. La impresora los saca en negro. Pulsa Guardar para usarlo.
+- **Etiquetas listas:** en ese mismo editor hay una etiqueta vertical de 4×6 que dice POR FAVOR, MANÉJESE CON CUIDADO, FRÁGIL y GRACIAS. **Imprimir** la manda a la Zebra.
 - **Abrir Descargas** y **Carpeta de imágenes** abren las dos carpetas.
