@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Logo CazaToy</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; font: 15px/1.4 -apple-system, sans-serif; background: #f3f1ec; color: #1c1a17; }
+  main { display: flex; gap: 24px; padding: 24px; align-items: flex-start; }
+  aside { width: 260px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p { margin: 0 0 16px; color: #5c564e; }
+  button, input { font: inherit; }
+  .stores { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .stores button { text-align: left; padding: 8px 10px; border: 1px solid #d7d1c7; background: white; border-radius: 8px; }
+  .stores button.active { border-color: #1c1a17; background: #1c1a17; color: white; }
+  label { display: block; margin: 10px 0 4px; }
+  input[type="text"] { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #d7d1c7; }
+  input[type="range"] { width: 100%; }
+  .row { display: flex; gap: 8px; margin-top: 12px; }
+  .row button { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid #1c1a17; background: #1c1a17; color: white; }
+  .row button.ghost { background: white; color: #1c1a17; }
+  .file { display: block; margin-top: 12px; text-align: center; padding: 8px; border-radius: 8px; border: 1px dashed #1c1a17; background: white; cursor: pointer; }
+  #file { display: none; }
+  #matrix { width: 100%; margin-top: 12px; padding: 10px; background: white; color: #1c1a17; border: 1px solid #1c1a17; border-radius: 8px; font-family: "Courier New", monospace; }
+  #matrix.on { background: #1c1a17; color: white; }
+  #sheet { position: relative; width: 406px; height: 609px; background: white; border: 1px solid #1c1a17; box-shadow: 0 8px 24px rgba(0,0,0,.08); touch-action: none; overflow: hidden; }
+  #logo, #ascii, #logo2, #ascii2 { position: absolute; cursor: grab; user-select: none; -webkit-user-drag: none; }
+  .x { position: absolute; z-index: 3; width: 22px; height: 22px; margin: 0; padding: 0; border: none; border-radius: 11px; background: #1c1a17; color: white; line-height: 20px; cursor: pointer; }
+  #ascii, #ascii2 { background: white; }
+  .chosen { outline: 2px solid #1c1a17; }
+  #logo:active { cursor: grabbing; }
+  #msg { min-height: 1.4em; margin-top: 8px; }
+  .ready { padding: 0 24px 24px; }
+  .ready h2 { font-size: 18px; margin: 0 0 12px; }
+  .card { width: 180px; background: white; border: 1px solid #d7d1c7; border-radius: 12px; padding: 12px; }
+  .card img { width: 100%; height: auto; border: 1px solid #1c1a17; background: white; }
+  .card button { width: 100%; margin-top: 10px; padding: 8px; border-radius: 8px; border: 1px solid #1c1a17; background: #1c1a17; color: white; }
+</style>
+</head>
+<body>
+<main>
+  <aside>
+    <h1>Logo por tienda</h1>
+    <p>Arrastra el logo dentro de la etiqueta de 4×6. El blanco no se imprime. Guarda una posición para cada tienda.</p>
+    <div class="stores" id="stores"></div>
+    <label for="name">Nombre</label>
+    <input id="name" type="text" maxlength="40">
+    <label for="size">Ancho <span id="sizeLabel"></span></label>
+    <input id="size" type="range" min="80" max="700" step="4">
+    <div class="row">
+      <button id="save" type="button">Guardar</button>
+      <button id="add" class="ghost" type="button">Nueva</button>
+    </div>
+    <div class="row">
+      <button id="remove" class="ghost" type="button">Borrar tienda</button>
+    </div>
+    <div class="row">
+      <button id="slot1" type="button">Imagen 1</button>
+      <button id="slot2" class="ghost" type="button">Imagen 2</button>
+    </div>
+    <label class="file" for="file">Cargar imagen</label>
+    <input id="file" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+    <button id="matrix" type="button">Pasar a ASCII</button>
+    <p id="msg"></p>
+  </aside>
+  <div id="sheet">
+    <img id="logo" alt="Imagen 1" src="/logo.png">
+    <canvas id="ascii" hidden></canvas>
+    <img id="logo2" alt="Imagen 2" src="/logo.png?slot=2">
+    <canvas id="ascii2" hidden></canvas>
+    <button id="x1" class="x" type="button" aria-label="Quitar imagen 1">×</button>
+    <button id="x2" class="x" type="button" aria-label="Quitar imagen 2">×</button>
+  </div>
+</main>
+<section class="ready">
+  <h2>Etiquetas listas</h2>
+  <article class="card">
+    <img src="/ready/cuidado.png?v=2" alt="Manéjese con cuidado">
+    <button id="printCare" type="button">Imprimir</button>
+  </article>
+</section>
+<script>
+const DOT = 2;
+const sheet = document.getElementById("sheet");
+const logo = document.getElementById("logo");
+const ascii = document.getElementById("ascii");
+const matrixButton = document.getElementById("matrix");
+const storesEl = document.getElementById("stores");
+const nameInput = document.getElementById("name");
+const sizeInput = document.getElementById("size");
+const sizeLabel = document.getElementById("sizeLabel");
+const msg = document.getElementById("msg");
+let state = { active: "", stores: [] };
+const logo2 = document.getElementById("logo2");
+const ascii2 = document.getElementById("ascii2");
+let slot = 1;
+let aspects = { 1: 481 / 721, 2: 481 / 721 };
+let logoVersion = { 1: 0, 2: 0 };
+
+function current() {
+  return state.stores.find((store) => store.name === state.active) || state.stores[0];
+}
+
+function ensureImages(store) {
+  if (!Array.isArray(store.images) || store.images.length < 2) {
+    store.images = [
+      { slot: 1, x: store.x || 16, y: store.y || 16, width: store.width || 280, ascii: !!store.ascii },
+      { slot: 2, x: 420, y: store.y || 16, width: 200, ascii: false },
+    ];
+  }
+  return store.images;
+}
+
+function selected() {
+  return ensureImages(current())[slot - 1];
+}
+
+function layer(number) {
+  return number === 1 ? { img: logo, canvas: ascii } : { img: logo2, canvas: ascii2 };
+}
+
+function placeLogo() {
+  const store = current();
+  if (!store) return;
+  const images = ensureImages(store);
+  for (const image of images) {
+    const piece = layer(image.slot);
+    const aspect = aspects[image.slot];
+    const width = image.width / DOT;
+    piece.img.style.width = width + "px";
+    piece.img.style.height = (width * aspect) + "px";
+    piece.img.style.left = (image.x / DOT) + "px";
+    piece.img.style.top = (image.y / DOT) + "px";
+    const visible = image.present !== false;
+    const token = store.name + image.slot + ":" + (logoVersion[image.slot] || 0);
+    if (visible && piece.img.dataset.store !== token) {
+      piece.img.dataset.store = token;
+      piece.img.src = "/logo.png?store=" + encodeURIComponent(store.name) + "&slot=" + image.slot + "&v=" + (logoVersion[image.slot] || 0);
+    }
+    const mark = document.getElementById("x" + image.slot);
+    mark.hidden = !visible;
+    mark.style.left = (image.x / DOT + width - 22) + "px";
+    mark.style.top = (image.y / DOT) + "px";
+    piece.img.hidden = !visible;
+    piece.canvas.hidden = true;
+    piece.img.classList.toggle("chosen", visible && image.slot === slot && !image.ascii);
+    piece.canvas.classList.toggle("chosen", visible && image.slot === slot && !!image.ascii);
+  }
+  const active = selected();
+  sizeInput.value = active.width;
+  sizeLabel.textContent = Math.round(active.width / 203 * 25.4) + " mm";
+  nameInput.value = store.name;
+  matrixButton.classList.toggle("on", !!active.ascii);
+  matrixButton.textContent = active.ascii ? "ASCII activo" : "Pasar a ASCII";
+  drawAscii(1);
+  drawAscii(2);
+  document.getElementById("slot1").className = slot === 1 ? "" : "ghost";
+  document.getElementById("slot2").className = slot === 2 ? "" : "ghost";
+}
+
+function drawAscii(number) {
+  const store = current();
+  const image = store && ensureImages(store)[number - 1];
+  const piece = layer(number);
+  if (!store || !image || image.present === false || !image.ascii || !piece.img.complete || !piece.img.naturalWidth) {
+    piece.canvas.hidden = true;
+    if (image && image.present === false) piece.img.hidden = true;
+    return;
+  }
+  const width = Math.max(1, Math.round(image.width / DOT));
+  const height = Math.max(1, Math.round(width * aspects[number]));
+  piece.canvas.hidden = false;
+  piece.img.hidden = true;
+  piece.canvas.style.left = (image.x / DOT) + "px";
+  piece.canvas.style.top = (image.y / DOT) + "px";
+  piece.canvas.style.width = width + "px";
+  piece.canvas.style.height = height + "px";
+  piece.canvas.width = width;
+  piece.canvas.height = height;
+  const ctx = piece.canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, width, height);
+  const probe = document.createElement("canvas");
+  probe.width = width;
+  probe.height = height;
+  const probeCtx = probe.getContext("2d");
+  probeCtx.drawImage(piece.img, 0, 0, width, height);
+  const pixels = probeCtx.getImageData(0, 0, width, height).data;
+  const cell = 8;
+  ctx.font = "8px Courier New";
+  ctx.fillStyle = "#000";
+  const digits = "0123456789";
+  for (let y = 0; y < height; y += cell) {
+    for (let x = 0; x < width; x += cell) {
+      let dark = 0;
+      let count = 0;
+      for (let yy = y; yy < y + cell && yy < height; yy++) {
+        for (let xx = x; xx < x + cell && xx < width; xx++) {
+          const index = (yy * width + xx) * 4;
+          const luma = pixels[index] * 0.3 + pixels[index + 1] * 0.59 + pixels[index + 2] * 0.11;
+          if (pixels[index + 3] > 20 && luma < 210) dark += 1;
+          count += 1;
+        }
+      }
+      if (count && dark / count > 0.12) {
+        const level = Math.min(9, Math.floor((dark / count) * 10));
+        ctx.fillText(digits[level], x, y + 8);
+      }
+    }
+  }
+}
+
+function renderList() {
+  storesEl.innerHTML = "";
+  for (const store of state.stores) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = store.name;
+    button.className = store.name === state.active ? "active" : "";
+    button.onclick = () => { state.active = store.name; renderList(); placeLogo(); };
+    storesEl.appendChild(button);
+  }
+}
+
+logo.onload = () => { aspects[1] = logo.naturalHeight / logo.naturalWidth; placeLogo(); };
+logo2.onload = () => { aspects[2] = logo2.naturalHeight / logo2.naturalWidth; placeLogo(); };
+
+function syncStore() {
+  const store = current();
+  const first = ensureImages(store)[0];
+  store.x = first.x;
+  store.y = first.y;
+  store.width = first.width;
+  store.ascii = !!first.ascii;
+}
+
+let drag = null;
+function startDrag(event, number) {
+  slot = number;
+  const image = selected();
+  const rect = sheet.getBoundingClientRect();
+  drag = {
+    dx: event.clientX - rect.left - image.x / DOT,
+    dy: event.clientY - rect.top - image.y / DOT,
+  };
+  event.currentTarget.setPointerCapture(event.pointerId);
+}
+function moveDrag(event) {
+  if (!drag) return;
+  const image = selected();
+  const rect = sheet.getBoundingClientRect();
+  const height = image.width * aspects[slot];
+  image.x = Math.round(Math.min(812 - image.width, Math.max(0, (event.clientX - rect.left - drag.dx) * DOT)));
+  image.y = Math.round(Math.min(1218 - height, Math.max(0, (event.clientY - rect.top - drag.dy) * DOT)));
+  syncStore();
+  placeLogo();
+}
+function bindDrag(node, number) {
+  node.addEventListener("pointerdown", (event) => startDrag(event, number));
+  node.addEventListener("pointermove", moveDrag);
+  node.addEventListener("pointerup", () => { drag = null; });
+}
+bindDrag(logo, 1);
+bindDrag(ascii, 1);
+bindDrag(logo2, 2);
+bindDrag(ascii2, 2);
+
+sizeInput.addEventListener("input", () => {
+  const image = selected();
+  image.width = Number(sizeInput.value);
+  const height = image.width * aspects[slot];
+  if (image.x + image.width > 812) image.x = Math.max(0, 812 - image.width);
+  if (image.y + height > 1218) image.y = Math.max(0, Math.round(1218 - height));
+  syncStore();
+  placeLogo();
+});
+
+nameInput.addEventListener("change", () => {
+  const store = current();
+  const next = nameInput.value.trim();
+  if (!next || state.stores.some((item) => item !== store && item.name === next)) {
+    nameInput.value = store.name;
+    return;
+  }
+  store.name = next;
+  state.active = next;
+  renderList();
+});
+
+async function load() {
+  const response = await fetch("/api/stores");
+  state = await response.json();
+  renderList();
+  placeLogo();
+}
+
+document.getElementById("save").onclick = async () => {
+  const response = await fetch("/api/stores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state),
+  });
+  state = await response.json();
+  renderList();
+  placeLogo();
+  msg.textContent = "Guardado. Las siguientes etiquetas usan " + state.active + ".";
+};
+
+document.getElementById("add").onclick = () => {
+  let name = "Nueva tienda";
+  let n = 2;
+  while (state.stores.some((store) => store.name === name)) {
+    name = "Nueva tienda " + n;
+    n += 1;
+  }
+  state.stores.push({ name, x: 40, y: 40, width: 280 });
+  state.active = name;
+  renderList();
+  placeLogo();
+};
+
+document.getElementById("file").onchange = async (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (!file || !current()) return;
+  const response = await fetch("/api/logo?store=" + encodeURIComponent(current().name) + "&slot=" + slot, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: await file.arrayBuffer(),
+  });
+  if (!response.ok) {
+    msg.textContent = "No se pudo cargar la imagen.";
+    return;
+  }
+  event.target.value = "";
+  const image = selected();
+  image.present = true;
+  syncStore();
+  logoVersion[slot] = Date.now();
+  layer(slot).img.dataset.store = "";
+  await fetch("/api/stores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state),
+  }).then((response) => response.json()).then((saved) => { state = saved; });
+  placeLogo();
+  msg.textContent = "Imagen " + slot + " cargada para " + current().name + ".";
+};
+
+async function clearImage(number) {
+  slot = number;
+  const image = selected();
+  image.present = false;
+  image.ascii = false;
+  syncStore();
+  const response = await fetch("/api/logo?store=" + encodeURIComponent(current().name) + "&slot=" + number, { method: "DELETE" });
+  if (!response.ok) {
+    msg.textContent = "No se pudo quitar la imagen.";
+    return;
+  }
+  logoVersion[number] = Date.now();
+  layer(number).img.removeAttribute("src");
+  layer(number).img.dataset.store = "";
+  const saved = await fetch("/api/stores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(state),
+  });
+  state = await saved.json();
+  renderList();
+  placeLogo();
+  msg.textContent = "Imagen " + number + " quitada. Carga otra en su lugar.";
+}
+
+document.getElementById("x1").onclick = () => clearImage(1);
+document.getElementById("x2").onclick = () => clearImage(2);
+
+matrixButton.onclick = () => {
+  const image = selected();
+  image.ascii = !image.ascii;
+  syncStore();
+  placeLogo();
+  msg.textContent = image.ascii
+    ? "La imagen queda en caracteres. En la impresora sale en negro. Pulsa Guardar."
+    : "Imagen normal. Pulsa Guardar para usarla.";
+};
+
+document.getElementById("slot1").onclick = () => { slot = 1; placeLogo(); };
+document.getElementById("slot2").onclick = () => { slot = 2; placeLogo(); };
+
+document.getElementById("remove").onclick = async () => {
+  if (state.stores.length < 2) {
+    msg.textContent = "Deja al menos una tienda.";
+    return;
+  }
+  state.stores = state.stores.filter((store) => store.name !== state.active);
+  state.active = state.stores[0].name;
+  renderList();
+  placeLogo();
+};
+
+document.getElementById("printCare").onclick = async () => {
+  const response = await fetch("/api/ready?id=cuidado", { method: "POST" });
+  msg.textContent = response.ok ? "Manéjese con cuidado enviada a la impresora." : "No se pudo imprimir.";
+};
+
+load();
+</script>
+</body>
+</html>

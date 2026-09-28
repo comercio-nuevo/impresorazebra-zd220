@@ -8,7 +8,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .config import LABEL_H, LABEL_W
+from .config import LABEL_H, LABEL_W, logo_file
+
+LOGO_PATH = Path(__file__).resolve().parent / "assets" / "caza.png"
 
 ZPL_FONT_H = 26
 ZPL_FONT_W = 16
@@ -120,15 +122,96 @@ def find_white_origin(
     return best
 
 
-def stamp_bitmap(image: Image.Image, text: str) -> tuple[Image.Image, bool]:
+def load_logo_mark(width: int, source: Path | None = None, ascii_mode: bool = False) -> Image.Image:
+    """El blanco y lo transparente no se imprimen; solo queda el trazo negro."""
+    path = source if source is not None and source.exists() else LOGO_PATH
+    source = Image.open(path).convert("RGBA")
+    pixels = source.load()
+    visited_min_x, visited_min_y = source.width, source.height
+    max_x = max_y = -1
+    for y in range(source.height):
+        for x in range(source.width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha < 20 or (red > 245 and green > 245 and blue > 245):
+                continue
+            visited_min_x = min(visited_min_x, x)
+            visited_min_y = min(visited_min_y, y)
+            max_x = max(max_x, x)
+            max_y = max(max_y, y)
+    if max_x < 0:
+        cropped = source.convert("L")
+    else:
+        cropped = source.crop((visited_min_x, visited_min_y, max_x + 1, max_y + 1)).convert("L")
+    width = max(40, int(width))
+    height = max(1, round(width * cropped.height / max(cropped.width, 1)))
+    resized = cropped.resize((width, height), Image.Resampling.BOX)
+    marked = threshold(resized, level=170)
+    if not ascii_mode:
+        return marked
+    from .pipeline import digit_matrix
+
+    return digit_matrix(marked)
+
+
+def gfa_field(image: Image.Image, x: int, y: int) -> str:
+    image = image.convert("L")
+    width, height = image.size
+    row_bytes = (width + 7) // 8
+    pixels = image.tobytes()
+    graphic = bytearray(row_bytes * height)
+    for row_y in range(height):
+        row = row_y * width
+        offset = row_y * row_bytes
+        for row_x in range(width):
+            if pixels[row + row_x] < 128:
+                graphic[offset + (row_x >> 3)] |= 0x80 >> (row_x & 7)
+    total = row_bytes * height
+    return f"^FO{int(x)},{int(y)}^GFA,{total},{total},{row_bytes},{graphic.hex().upper()}^FS"
+
+
+def _paste_mark(image: Image.Image, mark: Image.Image, x: int, y: int) -> Image.Image:
+    if x >= image.width or y >= image.height:
+        return image
+    visible = mark.crop((0, 0, min(mark.width, image.width - x), min(mark.height, image.height - y)))
+    mask = visible.point([255 if value < 128 else 0 for value in range(256)])
+    black = Image.new("L", visible.size, 0)
+    image.paste(black, (max(0, x), max(0, y)), mask)
+    return image
+
+
+def _mark_placements(placement: dict) -> list[dict]:
+    name = str(placement.get("name", ""))
+    images = placement.get("images")
+    if not isinstance(images, list) or not images:
+        if placement.get("present") is False:
+            return []
+        return [{**placement, "name": name, "slot": int(placement.get("slot", 1))}]
+    marks = []
+    for item in images[:2]:
+        if not isinstance(item, dict) or item.get("present") is False:
+            continue
+        marks.append({**item, "name": name, "slot": int(item.get("slot", len(marks) + 1))})
+    return marks
+
+
+def _logo_for(place: dict) -> Image.Image:
+    custom = logo_file(str(place.get("name", "")), int(place.get("slot", 1)))
+    legacy = logo_file(str(place.get("name", "")), 1)
+    source = custom if custom.exists() else legacy if int(place.get("slot", 1)) == 1 and legacy.exists() else None
+    return load_logo_mark(int(place["width"]), source if source is not None and source.exists() else None, bool(place.get("ascii")))
+
+
+def stamp_bitmap(image: Image.Image, text: str, placement: dict | None = None) -> tuple[Image.Image, bool]:
     image = threshold(image)
+    if placement:
+        for place in _mark_placements(placement):
+            _paste_mark(image, _logo_for(place), int(place["x"]), int(place["y"]))
+        return image, True
     mark = render_wordmark(text)
     origin = find_white_origin(image, mark.width, mark.height)
     if origin is None:
         return image, False
-    mask = mark.point([255 if value < 128 else 0 for value in range(256)])
-    black = Image.new("L", mark.size, 0)
-    image.paste(black, origin, mask)
+    _paste_mark(image, mark, origin[0], origin[1])
     return image, True
 
 
@@ -238,8 +321,24 @@ def _draw_zpl_label(zpl: str) -> Image.Image:
     return canvas
 
 
-def stamp_zpl(zpl: str, text: str) -> tuple[str, bool]:
-    """Inserta ^A0N en un hueco de cada etiqueta. Un ^GF ya es la etiqueta completa."""
+def stamp_zpl(zpl: str, text: str, placement: dict | None = None) -> tuple[str, bool]:
+    """Sin posición, inserta el texto. Con posición de tienda, pega el logo ahí."""
+    if placement:
+        fields = "".join(
+            gfa_field(_logo_for(place), int(place["x"]), int(place["y"]))
+            for place in _mark_placements(placement)
+        )
+        parts = re.split(r"(\^XA.*?\^XZ)", zpl, flags=re.S)
+        if not any(part.startswith("^XA") for part in parts):
+            return zpl, False
+        output = []
+        for part in parts:
+            if part.startswith("^XA") and "^XZ" in part:
+                cut = part.rfind("^XZ")
+                output.append(part[:cut] + fields + part[cut:])
+            else:
+                output.append(part)
+        return "".join(output), True
     logo = clean_logo(text)
     parts = re.split(r"(\^XA.*?\^XZ)", zpl, flags=re.S)
     if not any(part.startswith("^XA") for part in parts):

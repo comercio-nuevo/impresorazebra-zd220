@@ -119,7 +119,11 @@ class ServerTests(unittest.TestCase):
         pdf.write_bytes(b"%PDF")
         other = folder / "foto.heic"
         other.write_bytes(b"x")
+        jpg = folder / "foto.jpg"
+        jpg.write_bytes(b"x")
         self.assertTrue(should_take(pdf))
+        self.assertFalse(should_take(jpg))
+        self.assertTrue(should_take(jpg, images=True))
         self.assertFalse(should_take(other))
 
     def _request(self, operation: int) -> bytes:

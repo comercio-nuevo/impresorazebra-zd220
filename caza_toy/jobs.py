@@ -21,6 +21,8 @@ class Job:
     data: bytes = b""
     source: Path | None = None
     ident: tuple | None = None
+    keep: bool = False
+    plain: bool = False
     copies: int = 1
     state: int = JOB_PENDING
     reasons: str = "none"

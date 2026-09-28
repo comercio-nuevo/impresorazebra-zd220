@@ -15,18 +15,21 @@ from watchdog.observers import Observer
 
 log = logging.getLogger(__name__)
 
-PRINT_SUFFIXES = {".pdf", ".zpl", ".txt", ".jpg", ".jpeg", ".png", ".csv", ".zip"}
+LABEL_SUFFIXES = {".pdf", ".zpl", ".txt", ".csv", ".zip"}
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+PRINT_SUFFIXES = LABEL_SUFFIXES | IMAGE_SUFFIXES
 _SKIP_SUFFIXES = {".crdownload", ".download", ".part", ".partial", ".tmp"}
 _MAX_MEMBER = 30_000_000
 
 
-def should_take(path: Path) -> bool:
+def should_take(path: Path, images: bool = False) -> bool:
     if path.name.startswith(".") or not path.is_file():
         return False
     suffix = path.suffix.lower()
     if suffix in _SKIP_SUFFIXES:
         return False
-    return suffix in PRINT_SUFFIXES
+    allowed = IMAGE_SUFFIXES if images else LABEL_SUFFIXES
+    return suffix in allowed
 
 
 def file_ident(path: Path) -> tuple[str, int, int] | None:
@@ -66,7 +69,7 @@ def files_in_zip(data: bytes, depth: int = 0) -> list[tuple[str, bytes]]:
     return found
 
 
-def run_inbox(inbox: Path, ingest, stop: threading.Event, skip_existing: bool = True) -> None:
+def run_inbox(inbox: Path, ingest, stop: threading.Event, skip_existing: bool = True, images: bool = False) -> None:
     skipped: set[tuple[str, int, int]] = set()
     if skip_existing and inbox.exists():
         for path in inbox.iterdir():
@@ -95,13 +98,13 @@ def run_inbox(inbox: Path, ingest, stop: threading.Event, skip_existing: bool = 
         while not stop.is_set():
             wake.wait(1.0)
             wake.clear()
-            _scan(inbox, ingest, skipped)
+            _scan(inbox, ingest, skipped, images)
     finally:
         observer.stop()
         observer.join(timeout=2)
 
 
-def _scan(inbox: Path, ingest, skipped: set[tuple[str, int, int]]) -> None:
+def _scan(inbox: Path, ingest, skipped: set[tuple[str, int, int]], images: bool = False) -> None:
     try:
         paths = list(inbox.iterdir())
     except OSError:
@@ -109,7 +112,7 @@ def _scan(inbox: Path, ingest, skipped: set[tuple[str, int, int]]) -> None:
         return
     for path in paths:
         ident = file_ident(path)
-        if ident is None or ident in skipped or not should_take(path):
+        if ident is None or ident in skipped or not should_take(path, images):
             continue
         if not _stable(path):
             continue

@@ -9,7 +9,7 @@ import threading
 import rumps
 from PIL import Image, ImageDraw
 
-from .config import DOWNLOADS, ICON_PATH, LOG_PATH, ensure_dirs
+from .config import DOWNLOADS, ICON_PATH, IMPRIMIR, LOG_PATH, ensure_dirs
 from .pipeline import TEST_ZPL
 from .service import Service
 
@@ -51,15 +51,17 @@ class CazaApp(rumps.App):
             self.net_item,
             None,
             self.matrix_item,
+            rumps.MenuItem("Posición del logo", callback=self.on_editor),
             self.pause_item,
             rumps.MenuItem("Reimprimir última", callback=self.on_reprint),
-            rumps.MenuItem("Abrir bandeja", callback=self.on_open),
+            rumps.MenuItem("Abrir Descargas", callback=self.on_open),
+            rumps.MenuItem("Carpeta de imágenes", callback=self.on_images),
             rumps.MenuItem("Imprimir prueba", callback=self.on_test),
         ]
         rumps.Timer(self.refresh, 1).start()
 
     def refresh(self, _timer) -> None:
-        self.status_item.title = self.service.status_line()
+        self.status_item.title = f"{self.service.status_line()} · {self.service.store_name()}"
         self.pause_item.title = "Reanudar" if self.service.paused else "Pausar"
         self.matrix_item.state = 1 if self.service.matrix_enabled() else 0
         self.net_item.title = self.service.network_label()
@@ -75,8 +77,15 @@ class CazaApp(rumps.App):
     def on_reprint(self, _sender) -> None:
         threading.Thread(target=self.service.reprint, name="caza-reprint", daemon=True).start()
 
+    def on_editor(self, _sender) -> None:
+        port = self.service.server.ipp_port if self.service.server else 8631
+        subprocess.run(["/usr/bin/open", f"http://127.0.0.1:{port}/editor"], check=False)
+
     def on_open(self, _sender) -> None:
         subprocess.run(["/usr/bin/open", str(DOWNLOADS)], check=False)
+
+    def on_images(self, _sender) -> None:
+        subprocess.run(["/usr/bin/open", str(IMPRIMIR)], check=False)
 
     def on_test(self, _sender) -> None:
         self.service.submit_bytes(TEST_ZPL.encode("ascii"), "prueba.zpl")

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import socket
 import threading
 import time
+from pathlib import Path
 
 from zeroconf import ServiceInfo, Zeroconf
 
@@ -264,9 +266,33 @@ class PrintServer:
                 if parsed is None:
                     break
                 request_line, headers, body, pending = parsed
-                method = request_line.split(" ", 1)[0].upper() if request_line else ""
+                method, path, query = _request_target(request_line)
                 closing = headers.get("connection", "").lower() == "close"
-                if method == "GET":
+                local_only = path in {"/editor", "/logo.png", "/api/stores", "/api/logo", "/api/ready"} or path.startswith("/ready/")
+                if local_only and not addr[0].startswith("127."):
+                    conn.sendall(_http(403, "text/plain; charset=utf-8", b"solo en esta Mac\n", closing))
+                    if closing:
+                        break
+                    continue
+                if method == "GET" and path == "/editor":
+                    page = Path(__file__).with_name("editor.html").read_bytes()
+                    conn.sendall(_http(200, "text/html; charset=utf-8", page, closing))
+                elif method == "GET" and path == "/logo.png":
+                    conn.sendall(_http(200, "image/png", _logo_bytes(_query_value(query, "store"), _query_value(query, "slot")), closing, "Cache-Control: no-store\r\n"))
+                elif method == "GET" and path == "/api/stores":
+                    payload = json.dumps(self.service.stores_payload()).encode()
+                    conn.sendall(_http(200, "application/json", payload, closing))
+                elif method == "POST" and path == "/api/stores":
+                    conn.sendall(_http(200, "application/json", self._save_stores(body), closing))
+                elif method == "POST" and path == "/api/logo":
+                    conn.sendall(self._save_logo(_query_value(query, "store"), _query_value(query, "slot"), body, closing))
+                elif method == "DELETE" and path == "/api/logo":
+                    conn.sendall(self._delete_logo(_query_value(query, "store"), _query_value(query, "slot"), closing))
+                elif method == "GET" and path.startswith("/ready/") and path.endswith(".png"):
+                    conn.sendall(self._ready_png(path, closing))
+                elif method == "POST" and path == "/api/ready":
+                    conn.sendall(self._print_ready(_query_value(query, "id"), closing))
+                elif method == "GET":
                     conn.sendall(_http(200, "text/plain; charset=utf-8", self._status_page(), closing))
                 elif method != "POST":
                     conn.sendall(_http(405, "text/plain", b"Usa POST\n", closing))
@@ -280,6 +306,50 @@ class PrintServer:
             pass
         finally:
             conn.close()
+
+    def _save_logo(self, store: str, slot: str, body: bytes, closing: bool) -> bytes:
+        if len(body) > 8_000_000:
+            return _http(413, "text/plain; charset=utf-8", b"imagen demasiado grande\n", closing)
+        try:
+            self.service.save_logo(store, body, 2 if slot == "2" else 1)
+        except Exception as exc:
+            log.exception("logo")
+            message = str(exc).encode("utf-8", "replace") or b"imagen no valida\n"
+            return _http(400, "text/plain; charset=utf-8", message, closing)
+        return _http(200, "application/json", b'{"ok":true}', closing)
+
+    def _delete_logo(self, store: str, slot: str, closing: bool) -> bytes:
+        try:
+            self.service.delete_logo(store, 2 if slot == "2" else 1)
+        except Exception as exc:
+            log.exception("logo")
+            message = str(exc).encode("utf-8", "replace") or b"no se pudo quitar\n"
+            return _http(400, "text/plain; charset=utf-8", message, closing)
+        return _http(200, "application/json", b'{"ok":true}', closing)
+
+    def _ready_png(self, path: str, closing: bool) -> bytes:
+        from .ready import ready_png
+
+        try:
+            png = ready_png(path.removeprefix("/ready/").removesuffix(".png"))
+        except ValueError:
+            return _http(404, "text/plain; charset=utf-8", b"etiqueta desconocida\n", closing)
+        return _http(200, "image/png", png, closing, "Cache-Control: no-store\r\n")
+
+    def _print_ready(self, name: str, closing: bool) -> bytes:
+        try:
+            self.service.print_ready(name)
+        except ValueError:
+            return _http(400, "text/plain; charset=utf-8", b"etiqueta desconocida\n", closing)
+        return _http(200, "application/json", b'{"ok":true}', closing)
+
+    def _save_stores(self, body: bytes) -> bytes:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            saved = self.service.save_stores(payload.get("stores") or [], str(payload.get("active") or ""))
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            saved = self.service.stores_payload()
+        return json.dumps(saved).encode()
 
     def _status_page(self) -> bytes:
         paused = "sí" if self.service.paused else "no"
@@ -500,6 +570,36 @@ class PrintServer:
         builder.integer("copies", job.copies)
 
 
+def _request_target(request_line: str) -> tuple[str, str, str]:
+    parts = request_line.split(" ")
+    if len(parts) < 2:
+        return "", "/", ""
+    raw = parts[1]
+    path, _, query = raw.partition("?")
+    return parts[0].upper(), path, query
+
+
+def _query_value(query: str, key: str) -> str:
+    from urllib.parse import parse_qs, unquote_plus
+
+    values = parse_qs(query, keep_blank_values=False).get(key)
+    if not values:
+        return ""
+    return unquote_plus(values[0])
+
+
+def _logo_bytes(store: str = "", slot: str = "1") -> bytes:
+    from .config import logo_file
+
+    number = 2 if slot == "2" else 1
+    custom = logo_file(store, number) if store else None
+    if custom is not None and custom.exists():
+        return custom.read_bytes()
+    if number == 1:
+        return (Path(__file__).resolve().parent / "assets" / "caza.png").read_bytes()
+    return (Path(__file__).resolve().parent / "assets" / "caza.png").read_bytes()
+
+
 def _group(message: IppMessage, tag: int) -> dict:
     for group_tag, attrs in message.groups:
         if group_tag == tag:
@@ -546,14 +646,15 @@ def _job_id(message: IppMessage) -> int | None:
     return None
 
 
-def _http(code: int, content_type: str, body: bytes, closing: bool = False) -> bytes:
-    reasons = {200: "OK", 405: "Method Not Allowed", 413: "Payload Too Large"}
+def _http(code: int, content_type: str, body: bytes, closing: bool = False, extra: str = "") -> bytes:
+    reasons = {200: "OK", 400: "Bad Request", 404: "Not Found", 405: "Method Not Allowed", 413: "Payload Too Large"}
     connection = "close" if closing else "keep-alive"
     head = (
         f"HTTP/1.1 {code} {reasons.get(code, 'OK')}\r\n"
         f"Content-Type: {content_type}\r\n"
         f"Content-Length: {len(body)}\r\n"
         f"Connection: {connection}\r\n"
+        f"{extra}"
         "\r\n"
     )
     return head.encode("ascii") + body

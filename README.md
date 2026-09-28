@@ -2,7 +2,7 @@
 
 App de barra de menú para macOS. Imprime etiquetas de 4×6 pulgadas en una Zebra ZD220 por USB y las anuncia en la red local como AirPrint.
 
-Los archivos nuevos en Descargas (PDF, ZPL, TXT, JPG, PNG, CSV o ZIP) se imprimen y se borran. No guarda copias de las etiquetas.
+Los archivos nuevos de etiquetas en Descargas (PDF, ZPL, TXT, CSV o ZIP) se imprimen y se borran. Las fotos se dejan en Documentos/imprimir y no se borran.
 
 ## Uso
 
@@ -26,4 +26,5 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.cazatoy.labels.plist
 ## Menú
 
 - **Matriz:** apagada, un `.txt` con `^XA` sale como ZPL II. Encendida, la etiqueta se dibuja como una cuadrícula de números y el código de barras no se escanea.
-- **Abrir bandeja:** abre Descargas.
+- **Posición del logo:** coloca hasta dos imágenes, arrástralas y guarda el preset por tienda. **Pasar a ASCII** convierte la imagen seleccionada en caracteres. La impresora los saca en negro. Pulsa Guardar para usarlo.
+- **Abrir Descargas** y **Carpeta de imágenes** abren las dos carpetas.

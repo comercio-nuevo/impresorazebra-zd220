@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 import subprocess
@@ -10,8 +11,10 @@ import time
 from pathlib import Path
 from queue import Empty, Queue
 
-from .config import DOWNLOADS, load_config, save_config, wipe_cache
+from .config import DOWNLOADS, IMPRIMIR, active_placement, apply_stores, load_config, logo_file, save_config, wipe_cache
 from .jobs import JOB_ABORTED, JOB_CANCELED, JOB_COMPLETED, JOB_PENDING, JOB_PROCESSING, Job
+from PIL import Image
+
 from .logo import clean_logo
 from .pipeline import prepare, send_to_printer
 from .server import PrintServer
@@ -129,6 +132,38 @@ class Service:
     def matrix_enabled(self) -> bool:
         return bool(load_config().get("matrix"))
 
+    def store_name(self) -> str:
+        place = active_placement()
+        return str(place["name"]) if place else "Sin tienda"
+
+    def stores_payload(self) -> dict:
+        data = load_config()
+        return {"active": data.get("active_store"), "stores": data.get("stores") or []}
+
+    def save_logo(self, store_name: str, data: bytes, slot: int = 1) -> None:
+        if not store_name.strip():
+            raise ValueError("falta la tienda")
+        if len(data) > 8_000_000:
+            raise ValueError("imagen demasiado grande")
+        image = Image.open(io.BytesIO(data))
+        image = image.convert("RGBA")
+        image.thumbnail((1200, 1200))
+        path = logo_file(store_name, slot)
+        image.save(path, "PNG")
+        log.info("logo de %s", store_name.strip())
+
+    def delete_logo(self, store_name: str, slot: int = 1) -> None:
+        if not store_name.strip():
+            raise ValueError("falta la tienda")
+        logo_file(store_name, slot).unlink(missing_ok=True)
+        log.info("logo borrado %s %s", store_name.strip(), slot)
+
+    def save_stores(self, stores: list, active: str) -> dict:
+        data = apply_stores(load_config(), stores, active)
+        save_config(data)
+        log.info("tienda=%s", data["active_store"])
+        return {"active": data["active_store"], "stores": data["stores"]}
+
     def toggle_matrix(self) -> bool:
         data = load_config()
         enabled = not bool(data.get("matrix"))
@@ -168,11 +203,15 @@ class Service:
         copies: int = 1,
         source: Path | None = None,
         ident: tuple | None = None,
+        keep: bool = False,
+        plain: bool = False,
     ) -> None:
         job.copies = max(1, min(20, int(copies or 1)))
         job.data = data
         job.source = source
         job.ident = ident
+        job.keep = keep
+        job.plain = plain
         if job.state == JOB_CANCELED:
             return
         job.state = JOB_PENDING
@@ -186,9 +225,11 @@ class Service:
         copies: int = 1,
         source: Path | None = None,
         ident: tuple | None = None,
+        keep: bool = False,
+        plain: bool = False,
     ) -> Job:
         job = self.reserve_job(name)
-        self.start_job(job, data, copies, source, ident)
+        self.start_job(job, data, copies, source, ident, keep, plain)
         return job
 
     def cancel_job(self, job: Job) -> None:
@@ -197,22 +238,28 @@ class Service:
         job.state = JOB_CANCELED
         job.reasons = "job-canceled"
 
-    def consider(self, path: Path) -> None:
+    def consider(self, path: Path, keep: bool = False) -> None:
         ident = file_ident(path)
-        if ident is None or ident in self._ignore or path.name in self._inflight:
+        key = str(path)
+        if ident is None or ident in self._ignore or key in self._inflight:
             return
-        self._inflight.add(path.name)
+        self._inflight.add(key)
         try:
             data = path.read_bytes()
             if len(data) > 30_000_000:
                 raise ValueError("el archivo supera 30 MB")
-            self.submit_bytes(data, path.name, source=path, ident=ident)
-            log.info("descargas %s", path.name)
+            self.submit_bytes(data, path.name, source=path, ident=ident, keep=keep)
+            log.info("%s %s", "imprimir" if keep else "descargas", path.name)
         except Exception as exc:
             log.exception("no se pudo encolar %s", path.name)
-            self._inflight.discard(path.name)
+            self._inflight.discard(key)
             self._ignore.add(ident)
             self.set_status(f"Error: {short_error(exc)}")
+
+    def print_ready(self, name: str) -> None:
+        from .ready import ready_zpl
+
+        self.submit_bytes(ready_zpl(name).encode("ascii"), f"{name}.zpl", plain=True)
 
     def reprint(self) -> None:
         if not self._last_zpl:
@@ -247,8 +294,14 @@ class Service:
         threading.Thread(target=self._worker, name="caza-print", daemon=True).start()
         threading.Thread(
             target=run_inbox,
-            args=(DOWNLOADS, self.consider, self._stop),
+            args=(DOWNLOADS, lambda path: self.consider(path, keep=False), self._stop),
             name="caza-watch",
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=run_inbox,
+            kwargs={"inbox": IMPRIMIR, "ingest": lambda path: self.consider(path, keep=True), "stop": self._stop, "images": True},
+            name="caza-images",
             daemon=True,
         ).start()
         log.info(
@@ -297,6 +350,8 @@ class Service:
                 self.busy = False
 
     def _render(self, job: Job) -> tuple[str, bool, int]:
+        if job.plain:
+            return job.data.decode("latin-1"), False, job.data.count(b"^XA") or 1
         if job.name.lower().endswith(".zip"):
             files = files_in_zip(job.data)
             if not files:
@@ -305,12 +360,24 @@ class Service:
             stamped = False
             pages = 0
             for name, blob in files:
-                prepared = prepare(blob, self.logo_text(), name, matrix=self.matrix_enabled())
+                prepared = prepare(
+                    blob,
+                    self.logo_text(),
+                    name,
+                    matrix=self.matrix_enabled(),
+                    placement=active_placement(),
+                )
                 chunks.append(prepared.zpl)
                 stamped = stamped or prepared.stamped
                 pages += prepared.pages
             return "\n".join(chunks), stamped, pages
-        prepared = prepare(job.data, self.logo_text(), job.name, matrix=self.matrix_enabled())
+        prepared = prepare(
+            job.data,
+            self.logo_text(),
+            job.name,
+            matrix=self.matrix_enabled(),
+            placement=active_placement(),
+        )
         return prepared.zpl, prepared.stamped, prepared.pages
 
     def _finish_download(self, job: Job, ok: bool) -> None:
@@ -318,10 +385,13 @@ class Service:
         try:
             if source is None:
                 return
-            if not ok:
-                if job.ident is not None:
+            if not ok or job.keep:
+                if not ok and job.ident is not None:
                     self._ignore.add(job.ident)
-                log.info("se dejó en Descargas %s", source.name)
+                if job.keep and ok:
+                    log.info("se conservó %s", source.name)
+                elif not ok:
+                    log.info("se dejó %s", source.name)
                 return
             try:
                 source.resolve().relative_to(DOWNLOADS.resolve())
@@ -333,7 +403,5 @@ class Service:
             except OSError:
                 log.exception("no se pudo borrar %s", source)
         finally:
-            self._inflight.discard(job.name)
-            if source is not None:
-                self._inflight.discard(source.name)
+            self._inflight.discard(str(source) if source is not None else job.name)
 

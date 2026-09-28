@@ -54,24 +54,30 @@ def sniff(data: bytes, name: str = "") -> str:
     return "unknown"
 
 
-def prepare(data: bytes, logo_text: str, name: str = "", matrix: bool = False) -> Prepared:
+def prepare(
+    data: bytes,
+    logo_text: str,
+    name: str = "",
+    matrix: bool = False,
+    placement: dict | None = None,
+) -> Prepared:
     if not data or not data.strip(b"\x00 \t\r\n"):
         raise ValueError("El archivo está vacío")
     kind = sniff(data, name)
     if kind == "pdf":
-        return _from_images(render_label_pages(data), logo_text, "pdf", matrix)
+        return _from_images(render_label_pages(data), logo_text, "pdf", matrix, placement)
     if kind == "image":
-        return _from_images([render_picture(data)], logo_text, "image", matrix)
+        return _from_images([render_picture(data)], logo_text, "image", matrix, placement)
     if kind == "text":
         text = data.decode("utf-8-sig", errors="replace").strip("\ufeff")
-        return _from_images([render_text(text)], logo_text, "text", matrix)
+        return _from_images([render_text(text)], logo_text, "text", matrix, placement)
     if kind == "csv":
-        return _from_csv(data, logo_text, matrix)
+        return _from_csv(data, logo_text, matrix, placement)
     if kind == "zpl":
         zpl_text = data.decode("latin-1", errors="replace")
         if matrix:
-            return _from_images(render_zpl_pages(zpl_text), logo_text, "zpl", True)
-        zpl, stamped = stamp_zpl(zpl_text, logo_text)
+            return _from_images(render_zpl_pages(zpl_text), logo_text, "zpl", True, placement)
+        zpl, stamped = stamp_zpl(zpl_text, logo_text, placement)
         if not zpl.endswith("\n"):
             zpl += "\n"
         return Prepared(zpl, stamped, "zpl", max(zpl.count("^XA"), 1))
@@ -116,11 +122,17 @@ def threshold_l(image: Image.Image, level: int = 200) -> Image.Image:
     return image.convert("L").point(lut)
 
 
-def _from_images(images: list[Image.Image], logo_text: str, kind: str, matrix: bool = False) -> Prepared:
+def _from_images(
+    images: list[Image.Image],
+    logo_text: str,
+    kind: str,
+    matrix: bool = False,
+    placement: dict | None = None,
+) -> Prepared:
     stamped = False
     parts: list[str] = []
     for image in images:
-        image, placed = stamp_bitmap(image, logo_text)
+        image, placed = stamp_bitmap(image, logo_text, placement)
         stamped = stamped or placed
         if matrix:
             image = digit_matrix(image)
@@ -187,7 +199,7 @@ def _text_width(font, text: str) -> float:
     return float(len(text) * 14)
 
 
-def _from_csv(data: bytes, logo_text: str, matrix: bool = False) -> Prepared:
+def _from_csv(data: bytes, logo_text: str, matrix: bool = False, placement: dict | None = None) -> Prepared:
     table = data.decode("utf-8-sig", errors="replace")
     rows = list(csv.reader(io.StringIO(table)))
     zpl_parts: list[str] = []
@@ -204,12 +216,12 @@ def _from_csv(data: bytes, logo_text: str, matrix: bool = False) -> Prepared:
                     images.extend(render_zpl_pages(cell))
             else:
                 for cell in zpl_cells:
-                    zpl, placed = stamp_zpl(cell if cell.endswith("\n") else cell + "\n", logo_text)
+                    zpl, placed = stamp_zpl(cell if cell.endswith("\n") else cell + "\n", logo_text, placement)
                     stamped = stamped or placed
                     zpl_parts.append(zpl if zpl.endswith("\n") else zpl + "\n")
             continue
         images.append(render_text("\n".join(cells)))
-    image_job = _from_images(images, logo_text, "csv", matrix) if images else None
+    image_job = _from_images(images, logo_text, "csv", matrix, placement) if images else None
     parts = list(zpl_parts)
     pages = len(zpl_parts)
     if image_job is not None:
