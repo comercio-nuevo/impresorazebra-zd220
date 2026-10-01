@@ -17,7 +17,8 @@ log = logging.getLogger(__name__)
 
 LABEL_SUFFIXES = {".pdf", ".zpl", ".txt", ".csv", ".zip"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-PRINT_SUFFIXES = LABEL_SUFFIXES | IMAGE_SUFFIXES
+_ZIP_LABEL_SUFFIXES = {".pdf", ".zpl", ".txt", ".csv", ".zip"}
+_LABEL_WORDS = ("etiqueta", "guia", "guía", "envio", "envío", "shipping", "label", "zpl", "mercado")
 _SKIP_SUFFIXES = {".crdownload", ".download", ".part", ".partial", ".tmp"}
 _MAX_MEMBER = 30_000_000
 
@@ -42,7 +43,32 @@ def file_ident(path: Path) -> tuple[str, int, int] | None:
     return (path.name, stat.st_size, stat.st_mtime_ns)
 
 
-def files_in_zip(data: bytes, depth: int = 0) -> list[tuple[str, bytes]]:
+def looks_like_label_name(name: str) -> bool:
+    folded = name.lower()
+    return any(word in folded for word in _LABEL_WORDS)
+
+
+def is_label_member(name: str, data: bytes, package: bool = False) -> bool:
+    """Un ZIP suelto no es etiqueta. Dentro, solo ZPL, CSV de envío o un PDF de 4×6."""
+    from .pipeline import pdf_has_label_page, sniff
+
+    kind = sniff(data, name)
+    if kind == "zpl":
+        return True
+    if kind == "csv":
+        return package or looks_like_label_name(name)
+    if kind == "pdf":
+        return package or looks_like_label_name(name) or pdf_has_label_page(data)
+    return False
+
+
+def accepts_download(name: str, data: bytes) -> bool:
+    if name.lower().endswith(".zip"):
+        return bool(files_in_zip(data, package=looks_like_label_name(name)))
+    return is_label_member(name, data, package=looks_like_label_name(name))
+
+
+def files_in_zip(data: bytes, depth: int = 0, package: bool = False) -> list[tuple[str, bytes]]:
     """Descomprime en un temporal, devuelve los archivos imprimibles y borra el temporal."""
     if depth > 2:
         return []
@@ -57,13 +83,13 @@ def files_in_zip(data: bytes, depth: int = 0) -> list[tuple[str, bytes]]:
                 if not name or name.startswith(".") or name.startswith("__MACOSX"):
                     continue
                 suffix = Path(name).suffix.lower()
-                if suffix not in PRINT_SUFFIXES:
+                if suffix not in _ZIP_LABEL_SUFFIXES:
                     continue
                 blob = archive.read(info)
                 (root / name).write_bytes(blob)
                 if suffix == ".zip":
-                    found.extend(files_in_zip(blob, depth + 1))
-                else:
+                    found.extend(files_in_zip(blob, depth + 1, package or looks_like_label_name(name)))
+                elif is_label_member(name, blob, package):
                     found.append((name, blob))
     found.sort(key=lambda item: (0 if item[0].lower().endswith(".zpl") else 1, item[0].lower()))
     return found

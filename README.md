@@ -2,7 +2,7 @@
 
 App de barra de menú para macOS. Imprime etiquetas de 4×6 pulgadas en una Zebra ZD220 por USB y las anuncia en la red local como AirPrint.
 
-Los archivos nuevos de etiquetas en Descargas (PDF, ZPL, TXT, CSV o ZIP) se imprimen y se borran. Las fotos se dejan en Documentos/imprimir y no se borran.
+Los archivos nuevos de etiquetas en Descargas (PDF de 4×6, ZPL, TXT con `^XA` o un ZIP de Mercado Libre) se imprimen y se borran. Un ZIP con otros documentos se queda. Las fotos se dejan en Documentos/imprimir y no se borran.
 
 ## Uso
 

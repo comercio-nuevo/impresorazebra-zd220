@@ -18,7 +18,7 @@ from PIL import Image
 from .logo import clean_logo
 from .pipeline import prepare, send_to_printer
 from .server import PrintServer
-from .watch import file_ident, files_in_zip, run_inbox
+from .watch import accepts_download, file_ident, files_in_zip, run_inbox
 
 log = logging.getLogger(__name__)
 
@@ -248,6 +248,11 @@ class Service:
             data = path.read_bytes()
             if len(data) > 30_000_000:
                 raise ValueError("el archivo supera 30 MB")
+            if not keep and not accepts_download(path.name, data):
+                self._inflight.discard(key)
+                self._ignore.add(ident)
+                log.info("se dejó, no es etiqueta %s", path.name)
+                return
             self.submit_bytes(data, path.name, source=path, ident=ident, keep=keep)
             log.info("%s %s", "imprimir" if keep else "descargas", path.name)
         except Exception as exc:

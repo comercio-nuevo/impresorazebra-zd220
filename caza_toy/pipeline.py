@@ -263,7 +263,20 @@ def _render_page(page: pymupdf.Page) -> Image.Image:
 def _is_label_page(rect: pymupdf.Rect) -> bool:
     width_in = rect.width / 72
     height_in = rect.height / 72
+    if width_in > height_in:
+        width_in, height_in = height_in, width_in
     return 3.7 <= width_in <= 4.35 and 5.4 <= height_in <= 6.5
+
+
+def pdf_has_label_page(data: bytes) -> bool:
+    try:
+        document = pymupdf.open(stream=data, filetype="pdf")
+    except Exception:
+        return False
+    try:
+        return any(_is_label_page(page.rect) for page in document)
+    finally:
+        document.close()
 
 
 def _content_clip(page: pymupdf.Page) -> pymupdf.Rect:

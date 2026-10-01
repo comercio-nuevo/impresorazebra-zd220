@@ -140,13 +140,20 @@ class PipelineTests(unittest.TestCase):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("guias/envio.zpl", "^XA^FO10,10^FDDentro^FS^XZ\n")
-            archive.writestr("guias/ignorar.docx", "no")
+            archive.writestr("guias/nota.txt", "esto no es una guia")
+            archive.writestr("guias/foto.png", b"\x89PNG\r\n")
+            archive.writestr("guias/informe.pdf", b"%PDF-1.1 not-a-label")
             archive.writestr("__MACOSX/._envio.zpl", "basura")
         before = set(Path(tempfile.gettempdir()).glob("cazatoy-*"))
         files = files_in_zip(buffer.getvalue())
         after = set(Path(tempfile.gettempdir()).glob("cazatoy-*"))
         self.assertEqual(before, after)
         self.assertEqual(files, [("envio.zpl", b"^XA^FO10,10^FDDentro^FS^XZ\n")])
+        dump = io.BytesIO()
+        with zipfile.ZipFile(dump, "w") as archive:
+            archive.writestr("facturas/recibo.pdf", b"%PDF-1.4 recibo")
+            archive.writestr("fotos/caja.jpg", b"\xff\xd8\xff")
+        self.assertEqual(files_in_zip(dump.getvalue()), [])
 
 
 if __name__ == "__main__":
