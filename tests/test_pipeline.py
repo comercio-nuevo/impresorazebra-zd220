@@ -8,7 +8,7 @@ import pymupdf
 from PIL import Image
 
 from caza_toy.config import LABEL_H, LABEL_W
-from caza_toy.pipeline import digit_matrix, image_to_zpl, prepare, render_label_pages, sample_label_pdf, sniff
+from caza_toy.pipeline import digit_matrix, image_to_zpl, prepare, render_label_pages, render_pdf_crop, sample_label_pdf, sniff
 from caza_toy.watch import files_in_zip
 
 
@@ -154,6 +154,18 @@ class PipelineTests(unittest.TestCase):
             archive.writestr("facturas/recibo.pdf", b"%PDF-1.4 recibo")
             archive.writestr("fotos/caja.jpg", b"\xff\xd8\xff")
         self.assertEqual(files_in_zip(dump.getvalue()), [])
+
+    def test_pdf_crop_becomes_a_full_label(self):
+        document = pymupdf.open()
+        page = document.new_page(width=612, height=792)
+        page.draw_rect(pymupdf.Rect(180, 280, 420, 640), color=(0, 0, 0), fill=(0, 0, 0))
+        data = document.tobytes()
+        document.close()
+        image = render_pdf_crop(data, 0, 180 / 612, 280 / 792, 240 / 612, 360 / 792)
+        self.assertEqual(image.size, (LABEL_W, LABEL_H))
+        self.assertLess(image.getpixel((406, 609)), 128)
+        turned = render_pdf_crop(data, 0, 0.1, 0.3, 0.7, 0.25, turned=True)
+        self.assertEqual(turned.size, (LABEL_W, LABEL_H))
 
 
 if __name__ == "__main__":

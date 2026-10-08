@@ -14,7 +14,15 @@ class ReadyLabelTests(unittest.TestCase):
         self.assertIn("^GFA,", zpl)
         self.assertIn("^PW812^LL1218", zpl)
 
-    def test_unknown_label_is_rejected(self):
+    def test_warning_set_is_black_with_ten_models(self):
+        from caza_toy.ready import catalog
+
+        names = [item["id"] for item in catalog()]
+        self.assertEqual(len(names), 10)
+        image = ready_image("arriba")
+        self.assertEqual(image.size, (812, 1218))
+        self.assertLess(image.getpixel((80, 200)), 128)
+        self.assertGreater(image.getpixel((200, 940)), 128)
         with self.assertRaises(ValueError):
             ready_zpl("otra")
 

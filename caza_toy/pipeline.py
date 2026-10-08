@@ -279,6 +279,59 @@ def pdf_has_label_page(data: bytes) -> bool:
         document.close()
 
 
+def pdf_page_count(data: bytes) -> int:
+    document = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        if document.needs_pass:
+            raise ValueError("El PDF está protegido con contraseña")
+        if document.page_count == 0:
+            raise ValueError("El PDF no tiene páginas")
+        return document.page_count
+    finally:
+        document.close()
+
+
+def pdf_page_png(data: bytes, index: int) -> bytes:
+    document = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        page = document[index]
+        zoom = 640 / max(page.rect.width, 1)
+        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
+        return pixmap.tobytes("png")
+    finally:
+        document.close()
+
+
+def render_pdf_crop(data: bytes, index: int, x: float, y: float, w: float, h: float, turned: bool = False) -> Image.Image:
+    document = pymupdf.open(stream=data, filetype="pdf")
+    try:
+        page = document[index]
+        rect = page.rect
+        left = rect.x0 + _unit(x) * rect.width
+        top = rect.y0 + _unit(y) * rect.height
+        clip = pymupdf.Rect(
+            left,
+            top,
+            left + min(max(float(w), 0.02), 1) * rect.width,
+            top + min(max(float(h), 0.02), 1) * rect.height,
+        ) & rect
+        if clip.width < 4 or clip.height < 4:
+            raise ValueError("el recorte está vacío")
+        target_w, target_h = (LABEL_H, LABEL_W) if turned else (LABEL_W, LABEL_H)
+        zoom = min(target_w / clip.width, target_h / clip.height)
+        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=clip, colorspace=pymupdf.csGRAY, alpha=False)
+        image = _pixmap_image(pixmap)
+        if turned:
+            image = image.transpose(Image.Transpose.ROTATE_90)
+        return _place(image)
+    finally:
+        document.close()
+
+
+def _unit(value: float) -> float:
+    return min(max(float(value), 0), 1)
+
+
 def _content_clip(page: pymupdf.Page) -> pymupdf.Rect:
     probe = page.get_pixmap(matrix=pymupdf.Matrix(1, 1), colorspace=pymupdf.csGRAY, alpha=False)
     bbox = _content_bbox(probe.samples, probe.width, probe.height)

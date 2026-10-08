@@ -268,7 +268,7 @@ class PrintServer:
                 request_line, headers, body, pending = parsed
                 method, path, query = _request_target(request_line)
                 closing = headers.get("connection", "").lower() == "close"
-                local_only = path in {"/editor", "/logo.png", "/api/stores", "/api/logo", "/api/ready"} or path.startswith("/ready/")
+                local_only = path in {"/editor", "/logo.png", "/api/stores", "/api/logo", "/api/ready", "/api/pdf", "/api/pdf/page", "/api/pdf/print"} or path.startswith("/ready/")
                 if local_only and not addr[0].startswith("127."):
                     conn.sendall(_http(403, "text/plain; charset=utf-8", b"solo en esta Mac\n", closing))
                     if closing:
@@ -290,8 +290,19 @@ class PrintServer:
                     conn.sendall(self._delete_logo(_query_value(query, "store"), _query_value(query, "slot"), closing))
                 elif method == "GET" and path.startswith("/ready/") and path.endswith(".png"):
                     conn.sendall(self._ready_png(path, closing))
+                elif method == "GET" and path == "/api/ready":
+                    from .ready import catalog
+
+                    payload = json.dumps(catalog()).encode()
+                    conn.sendall(_http(200, "application/json", payload, closing, "Cache-Control: no-store\r\n"))
                 elif method == "POST" and path == "/api/ready":
                     conn.sendall(self._print_ready(_query_value(query, "id"), closing))
+                elif method == "POST" and path == "/api/pdf":
+                    conn.sendall(self._store_pdf(body, closing))
+                elif method == "GET" and path == "/api/pdf/page":
+                    conn.sendall(self._pdf_page(_query_value(query, "n"), closing))
+                elif method == "POST" and path == "/api/pdf/print":
+                    conn.sendall(self._print_pdf(body, closing))
                 elif method == "GET":
                     conn.sendall(_http(200, "text/plain; charset=utf-8", self._status_page(), closing))
                 elif method != "POST":
@@ -341,6 +352,38 @@ class PrintServer:
             self.service.print_ready(name)
         except ValueError:
             return _http(400, "text/plain; charset=utf-8", b"etiqueta desconocida\n", closing)
+        return _http(200, "application/json", b'{"ok":true}', closing)
+
+    def _store_pdf(self, body: bytes, closing: bool) -> bytes:
+        try:
+            count = self.service.store_pdf(body)
+        except Exception as exc:
+            message = str(exc).encode("utf-8", "replace") or b"pdf no valido\n"
+            return _http(400, "text/plain; charset=utf-8", message, closing)
+        return _http(200, "application/json", json.dumps({"pages": count}).encode(), closing, "Cache-Control: no-store\r\n")
+
+    def _pdf_page(self, number: str, closing: bool) -> bytes:
+        try:
+            png = self.service.pdf_preview(int(number or "0"))
+        except Exception as exc:
+            message = str(exc).encode("utf-8", "replace") or b"sin hoja\n"
+            return _http(400, "text/plain; charset=utf-8", message, closing)
+        return _http(200, "image/png", png, closing, "Cache-Control: no-store\r\n")
+
+    def _print_pdf(self, body: bytes, closing: bool) -> bytes:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            self.service.print_pdf_crop(
+                int(payload.get("page") or 0),
+                float(payload.get("x") or 0),
+                float(payload.get("y") or 0),
+                float(payload.get("w") or 1),
+                float(payload.get("h") or 1),
+                bool(payload.get("rotate")),
+            )
+        except Exception as exc:
+            message = str(exc).encode("utf-8", "replace") or b"no se pudo imprimir\n"
+            return _http(400, "text/plain; charset=utf-8", message, closing)
         return _http(200, "application/json", b'{"ok":true}', closing)
 
     def _save_stores(self, body: bytes) -> bytes:

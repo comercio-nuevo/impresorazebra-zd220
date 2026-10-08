@@ -16,7 +16,7 @@ from .jobs import JOB_ABORTED, JOB_CANCELED, JOB_COMPLETED, JOB_PENDING, JOB_PRO
 from PIL import Image
 
 from .logo import clean_logo
-from .pipeline import prepare, send_to_printer
+from .pipeline import image_to_zpl, pdf_page_count, pdf_page_png, prepare, render_pdf_crop, send_to_printer
 from .server import PrintServer
 from .watch import accepts_download, file_ident, files_in_zip, run_inbox
 
@@ -87,6 +87,7 @@ class Service:
         self._inflight: set[str] = set()
         self._ignore: set[tuple] = set()
         self.server: PrintServer | None = None
+        self._pdf = b""
 
     @property
     def status(self) -> str:
@@ -265,6 +266,26 @@ class Service:
         from .ready import ready_zpl
 
         self.submit_bytes(ready_zpl(name).encode("ascii"), f"{name}.zpl", plain=True)
+
+    def store_pdf(self, data: bytes) -> int:
+        if len(data) > 30_000_000:
+            raise ValueError("el PDF supera 30 MB")
+        if not data.lstrip(b"\xef\xbb\xbf").startswith(b"%PDF"):
+            raise ValueError("no es un PDF")
+        count = pdf_page_count(data)
+        self._pdf = data
+        return count
+
+    def pdf_preview(self, index: int) -> bytes:
+        if not self._pdf:
+            raise ValueError("carga un PDF primero")
+        return pdf_page_png(self._pdf, index)
+
+    def print_pdf_crop(self, index: int, x: float, y: float, w: float, h: float, turned: bool = False) -> None:
+        if not self._pdf:
+            raise ValueError("carga un PDF primero")
+        image = render_pdf_crop(self._pdf, index, x, y, w, h, turned)
+        self.submit_bytes(image_to_zpl(image).encode("ascii"), "recorte.pdf", plain=True)
 
     def reprint(self) -> None:
         if not self._last_zpl:

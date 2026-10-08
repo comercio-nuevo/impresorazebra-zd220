@@ -21,7 +21,7 @@
   .row button { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid #1c1a17; background: #1c1a17; color: white; }
   .row button.ghost { background: white; color: #1c1a17; }
   .file { display: block; margin-top: 12px; text-align: center; padding: 8px; border-radius: 8px; border: 1px dashed #1c1a17; background: white; cursor: pointer; }
-  #file { display: none; }
+  #file, #pdffile { display: none; }
   #matrix { width: 100%; margin-top: 12px; padding: 10px; background: white; color: #1c1a17; border: 1px solid #1c1a17; border-radius: 8px; font-family: "Courier New", monospace; }
   #matrix.on { background: #1c1a17; color: white; }
   #sheet { position: relative; width: 406px; height: 609px; background: white; border: 1px solid #1c1a17; box-shadow: 0 8px 24px rgba(0,0,0,.08); touch-action: none; overflow: hidden; }
@@ -31,11 +31,22 @@
   .chosen { outline: 2px solid #1c1a17; }
   #logo:active { cursor: grabbing; }
   #msg { min-height: 1.4em; margin-top: 8px; }
-  .ready { padding: 0 24px 24px; }
+  .ready { padding: 0 24px 32px; }
   .ready h2 { font-size: 18px; margin: 0 0 12px; }
-  .card { width: 180px; background: white; border: 1px solid #d7d1c7; border-radius: 12px; padding: 12px; }
-  .card img { width: 100%; height: auto; border: 1px solid #1c1a17; background: white; }
-  .card button { width: 100%; margin-top: 10px; padding: 8px; border-radius: 8px; border: 1px solid #1c1a17; background: #1c1a17; color: white; }
+  .carousel { display: flex; align-items: center; gap: 12px; max-width: 420px; }
+  .carousel article { flex: 1; background: white; border: 1px solid #d7d1c7; border-radius: 12px; padding: 12px; }
+  .carousel img { width: 100%; height: auto; border: 1px solid #1c1a17; background: white; }
+  .carousel p { margin: 8px 0 0; text-align: center; }
+  .carousel button.step { width: 44px; height: 44px; border-radius: 22px; border: 1px solid #1c1a17; background: white; }
+  #readyPrint { width: 100%; margin-top: 10px; padding: 8px; border-radius: 8px; border: 1px solid #1c1a17; background: #1c1a17; color: white; }
+  .pdfbox { width: 300px; }
+  #pdfStage { position: relative; margin-top: 12px; border: 1px solid #1c1a17; background: white; touch-action: none; }
+  #pdfPage { width: 100%; height: auto; display: block; user-select: none; -webkit-user-drag: none; }
+  #crop { position: absolute; box-sizing: border-box; border: 2px solid #9b2c2c; background: rgba(155, 44, 44, .12); cursor: move; }
+  #cropHandle { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; background: #1c1a17; cursor: nwse-resize; }
+  #pdfPrint, #pdfTurn { width: 100%; margin-top: 12px; padding: 8px; border-radius: 8px; border: 1px solid #1c1a17; background: white; color: #1c1a17; }
+  #pdfPrint { background: #1c1a17; color: white; }
+  #pdfTurn.on { background: #1c1a17; color: white; }
 </style>
 </head>
 <body>
@@ -72,13 +83,36 @@
     <button id="x1" class="x" type="button" aria-label="Quitar imagen 1">×</button>
     <button id="x2" class="x" type="button" aria-label="Quitar imagen 2">×</button>
   </div>
+  <aside class="pdfbox">
+    <h1>Recortar PDF</h1>
+    <p>Carga el archivo, elige la hoja y mueve el recuadro hasta cubrir solo la etiqueta.</p>
+    <label class="file" for="pdffile">Cargar PDF</label>
+    <input id="pdffile" type="file" accept="application/pdf,.pdf">
+    <div class="row">
+      <button id="pdfPrev" class="ghost" type="button">Anterior</button>
+      <button id="pdfNext" class="ghost" type="button">Siguiente</button>
+    </div>
+    <button id="pdfTurn" class="ghost" type="button">Rotar 90°</button>
+    <p id="pdfLabel"></p>
+    <div id="pdfStage" hidden>
+      <img id="pdfPage" alt="Hoja del PDF">
+      <div id="crop"><span id="cropHandle"></span></div>
+    </div>
+    <button id="pdfPrint" type="button">Imprimir recorte</button>
+  </aside>
 </main>
 <section class="ready">
-  <h2>Etiquetas listas</h2>
-  <article class="card">
-    <img src="/ready/cuidado.png?v=2" alt="Manéjese con cuidado">
-    <button id="printCare" type="button">Imprimir</button>
-  </article>
+  <h2>Etiquetas de advertencia</h2>
+  <div class="carousel">
+    <button id="readyPrev" class="step" type="button" aria-label="Anterior">‹</button>
+    <article>
+      <img id="readyImg" alt="Etiqueta de advertencia">
+      <p id="readyName"></p>
+      <button id="readyPrint" type="button">Imprimir</button>
+    </article>
+    <button id="readyNext" class="step" type="button" aria-label="Siguiente">›</button>
+  </div>
+  <p id="readyCount"></p>
 </section>
 <script>
 const DOT = 2;
@@ -399,10 +433,164 @@ document.getElementById("remove").onclick = async () => {
   placeLogo();
 };
 
-document.getElementById("printCare").onclick = async () => {
-  const response = await fetch("/api/ready?id=cuidado", { method: "POST" });
-  msg.textContent = response.ok ? "Manéjese con cuidado enviada a la impresora." : "No se pudo imprimir.";
+const pdfStage = document.getElementById("pdfStage");
+const pdfPage = document.getElementById("pdfPage");
+const cropEl = document.getElementById("crop");
+const pdfLabel = document.getElementById("pdfLabel");
+let pdfPages = 0;
+let pdfIndex = 0;
+let crop = { x: 0.22, y: 0.3, w: 0.5, h: 0.4 };
+let cropDrag = null;
+let turned = false;
+
+function cropRatio() {
+  const aspect = pdfPage.naturalWidth / pdfPage.naturalHeight || 1;
+  return (turned ? 6 / 4 : 4 / 6) / aspect;
+}
+
+function placeCrop() {
+  cropEl.style.left = (crop.x * 100) + "%";
+  cropEl.style.top = (crop.y * 100) + "%";
+  cropEl.style.width = (crop.w * 100) + "%";
+  cropEl.style.height = (crop.h * 100) + "%";
+}
+
+function fitCrop() {
+  const ratio = cropRatio();
+  crop.h = 0.46;
+  crop.w = crop.h * ratio;
+  if (crop.w > 0.92) {
+    crop.w = 0.92;
+    crop.h = crop.w / ratio;
+  }
+  if (crop.h > 0.92) {
+    crop.h = 0.92;
+    crop.w = crop.h * ratio;
+  }
+  crop.x = (1 - crop.w) / 2;
+  crop.y = (1 - crop.h) / 2;
+  placeCrop();
+}
+
+function showPdfPage() {
+  pdfLabel.textContent = pdfPages ? "Hoja " + (pdfIndex + 1) + " de " + pdfPages : "";
+  pdfPage.src = "/api/pdf/page?n=" + pdfIndex + "&v=" + Date.now();
+}
+
+pdfPage.onload = () => { pdfStage.hidden = false; fitCrop(); };
+
+document.getElementById("pdffile").onchange = async (event) => {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  const response = await fetch("/api/pdf", { method: "POST", body: await file.arrayBuffer() });
+  if (!response.ok) {
+    pdfLabel.textContent = "No se pudo abrir el PDF.";
+    return;
+  }
+  const info = await response.json();
+  pdfPages = info.pages;
+  pdfIndex = 0;
+  showPdfPage();
 };
+
+document.getElementById("pdfPrev").onclick = () => {
+  if (pdfIndex > 0) { pdfIndex -= 1; showPdfPage(); }
+};
+document.getElementById("pdfNext").onclick = () => {
+  if (pdfIndex + 1 < pdfPages) { pdfIndex += 1; showPdfPage(); }
+};
+document.getElementById("pdfTurn").onclick = () => {
+  const centerX = crop.x + crop.w / 2;
+  const centerY = crop.y + crop.h / 2;
+  turned = !turned;
+  const width = crop.h;
+  const height = crop.w;
+  crop.w = Math.min(0.98, width);
+  crop.h = Math.min(0.98, height);
+  crop.x = Math.min(1 - crop.w, Math.max(0, centerX - crop.w / 2));
+  crop.y = Math.min(1 - crop.h, Math.max(0, centerY - crop.h / 2));
+  document.getElementById("pdfTurn").classList.toggle("on", turned);
+  placeCrop();
+};
+
+cropEl.addEventListener("pointerdown", (event) => {
+  const stage = pdfStage.getBoundingClientRect();
+  const resizing = event.target.id === "cropHandle";
+  cropDrag = {
+    resizing,
+    dx: event.clientX - stage.left - crop.x * stage.width,
+    dy: event.clientY - stage.top - crop.y * stage.height,
+  };
+  cropEl.setPointerCapture(event.pointerId);
+});
+cropEl.addEventListener("pointermove", (event) => {
+  if (!cropDrag) return;
+  const stage = pdfStage.getBoundingClientRect();
+  if (cropDrag.resizing) {
+    const ratio = cropRatio();
+    crop.w = Math.min(1 - crop.x, Math.max(0.08, (event.clientX - stage.left) / stage.width - crop.x));
+    crop.h = crop.w / ratio;
+    if (crop.y + crop.h > 1) crop.h = 1 - crop.y;
+    if (crop.w > crop.h * ratio) crop.w = crop.h * ratio;
+  } else {
+    crop.x = Math.min(1 - crop.w, Math.max(0, (event.clientX - stage.left - cropDrag.dx) / stage.width));
+    crop.y = Math.min(1 - crop.h, Math.max(0, (event.clientY - stage.top - cropDrag.dy) / stage.height));
+  }
+  placeCrop();
+});
+cropEl.addEventListener("pointerup", () => { cropDrag = null; });
+
+document.getElementById("pdfPrint").onclick = async () => {
+  if (!pdfPages) {
+    pdfLabel.textContent = "Carga un PDF primero.";
+    return;
+  }
+  const response = await fetch("/api/pdf/print", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page: pdfIndex, x: crop.x, y: crop.y, w: crop.w, h: crop.h, rotate: turned }),
+  });
+  pdfLabel.textContent = response.ok
+    ? "Hoja " + (pdfIndex + 1) + " enviada, solo el recuadro."
+    : "No se pudo imprimir el recorte.";
+};
+
+let readyItems = [];
+let readyIndex = 0;
+
+function showReady() {
+  const item = readyItems[readyIndex];
+  if (!item) return;
+  document.getElementById("readyImg").src = "/ready/" + item.id + ".png?v=3";
+  document.getElementById("readyImg").alt = item.name;
+  document.getElementById("readyName").textContent = item.name;
+  document.getElementById("readyCount").textContent = (readyIndex + 1) + " / " + readyItems.length;
+}
+
+document.getElementById("readyPrev").onclick = () => {
+  if (!readyItems.length) return;
+  readyIndex = (readyIndex + readyItems.length - 1) % readyItems.length;
+  showReady();
+};
+document.getElementById("readyNext").onclick = () => {
+  if (!readyItems.length) return;
+  readyIndex = (readyIndex + 1) % readyItems.length;
+  showReady();
+};
+document.getElementById("readyPrint").onclick = async () => {
+  const item = readyItems[readyIndex];
+  if (!item) return;
+  const response = await fetch("/api/ready?id=" + encodeURIComponent(item.id), { method: "POST" });
+  document.getElementById("readyCount").textContent = response.ok
+    ? item.name + " enviada a la impresora."
+    : "No se pudo imprimir.";
+};
+
+fetch("/api/ready").then((response) => response.json()).then((items) => {
+  readyItems = items;
+  showReady();
+});
 
 load();
 </script>
